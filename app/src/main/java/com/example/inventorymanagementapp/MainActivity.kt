@@ -126,7 +126,7 @@ class ShapeRecognitionHelper(context: Context) {
     fun findBestMatch(
         newEmbedding: FloatArray,
         existingItems: List<InventoryItem>,
-        threshold: Double = 0.72
+        threshold: Double = 0.5
     ): Pair<InventoryItem, Double>? {
         var bestItem: InventoryItem? = null
         var bestScore = -1.0
