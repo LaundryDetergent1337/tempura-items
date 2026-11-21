@@ -126,7 +126,7 @@ class ShapeRecognitionHelper(context: Context) {
     fun findBestMatch(
         newEmbedding: FloatArray,
         existingItems: List<InventoryItem>,
-        threshold: Double = 0.5
+        threshold: Double = 0.72
     ): Pair<InventoryItem, Double>? {
         var bestItem: InventoryItem? = null
         var bestScore = -1.0
@@ -243,7 +243,7 @@ fun InventoryAppScreen() {
                     Toast.LENGTH_LONG
                 ).show()
             } else {
-                val match = shapeHelper.findBestMatch(embedding, items, threshold = 0.72)
+                val match = shapeHelper.findBestMatch(embedding, items, threshold = 0.5)
                 matchedItemPair = match
                 pendingNewEmbedding = embedding
             }
