@@ -184,6 +184,7 @@ class ShapeRecognitionHelper(context: Context) {
 class YoloDetectorHelper(context: Context, modelName: String = "sku110k_yolo.tflite") {
     private var interpreter: Interpreter? = null
     private val inputSize = 640
+    var statusMessage: String = "Loading..."
 
     init {
         try {
@@ -194,56 +195,97 @@ class YoloDetectorHelper(context: Context, modelName: String = "sku110k_yolo.tfl
                 afd.declaredLength
             )
             val options = Interpreter.Options().apply { setNumThreads(4) }
-            interpreter = Interpreter(modelBuffer, options)
+            val interp = Interpreter(modelBuffer, options)
+            interpreter = interp
+            val inShape = interp.getInputTensor(0).shape().joinToString("x")
+            val outShape = interp.getOutputTensor(0).shape().joinToString("x")
+            statusMessage = "OK ($inShape -> $outShape)"
         } catch (e: Exception) {
+            statusMessage = "ERR: ${e.message}"
             e.printStackTrace()
         }
     }
 
-    fun detect(bitmap: Bitmap, confThreshold: Float = 0.40f, iouThreshold: Float = 0.45f): List<DetectedBox> {
+    fun detect(bitmap: Bitmap, confThreshold: Float = 0.25f, iouThreshold: Float = 0.45f): List<DetectedBox> {
         val interp = interpreter ?: return emptyList()
-        val resized = Bitmap.createScaledBitmap(bitmap, inputSize, inputSize, true)
-        val inputBuffer = bitmapToByteBuffer(resized)
+        return try {
+            val resized = Bitmap.createScaledBitmap(bitmap, inputSize, inputSize, true)
+            val inputBuffer = bitmapToByteBuffer(resized)
 
-        val outShape = interp.getOutputTensor(0).shape()
-        val channels = outShape[1]
-        val numAnchors = outShape[2]
-        val output = Array(1) { Array(channels) { FloatArray(numAnchors) } }
-        interp.run(inputBuffer, output)
+            val outShape = interp.getOutputTensor(0).shape()
+            val dim1 = outShape.get(1)
+            val dim2 = outShape.get(2)
+            val candidates = mutableListOf<DetectedBox>()
 
-        val candidates = mutableListOf<DetectedBox>()
-        for (i in 0 until numAnchors) {
-            var maxConf = 0f
-            for (c in 4 until channels) {
-                if (output[0][c][i] > maxConf) maxConf = output[0][c][i]
-            }
-            if (maxConf >= confThreshold) {
-                val cx = output[0][0][i]
-                val cy = output[0][1][i]
-                val w = output[0][2][i]
-                val h = output[0][3][i]
-                val scale = if (cx > 1.5f || w > 1.5f) inputSize.toFloat() else 1f
-                val left = ((cx - w / 2f) / scale).coerceIn(0f, 1f)
-                val top = ((cy - h / 2f) / scale).coerceIn(0f, 1f)
-                val right = ((cx + w / 2f) / scale).coerceIn(0f, 1f)
-                val bottom = ((cy + h / 2f) / scale).coerceIn(0f, 1f)
-                if (right > left && bottom > top) {
-                    candidates.add(DetectedBox(RectF(left, top, right, bottom), maxConf))
+            if (dim1 < dim2) {
+                val output = Array(1) { Array(dim1) { FloatArray(dim2) } }
+                interp.run(inputBuffer, output)
+                for (i in 0 until dim2) {
+                    var maxConf = 0f
+                    for (c in 4 until dim1) {
+                        if (output[0][c][i] > maxConf) maxConf = output[0][c][i]
+                    }
+                    if (maxConf >= confThreshold) {
+                        val cx = output[0][0][i]
+                        val cy = output[0][1][i]
+                        val w = output[0][2][i]
+                        val h = output[0][3][i]
+                        val scale = if (cx > 1.5f || w > 1.5f) inputSize.toFloat() else 1f
+                        val left = ((cx - w / 2f) / scale).coerceIn(0f, 1f)
+                        val top = ((cy - h / 2f) / scale).coerceIn(0f, 1f)
+                        val right = ((cx + w / 2f) / scale).coerceIn(0f, 1f)
+                        val bottom = ((cy + h / 2f) / scale).coerceIn(0f, 1f)
+                        if (right > left && bottom > top) {
+                            candidates.add(DetectedBox(RectF(left, top, right, bottom), maxConf))
+                        }
+                    }
+                }
+            } else {
+                val output = Array(1) { Array(dim1) { FloatArray(dim2) } }
+                interp.run(inputBuffer, output)
+                for (i in 0 until dim1) {
+                    var maxConf = 0f
+                    for (c in 4 until dim2) {
+                        if (output[0][i][c] > maxConf) maxConf = output[0][i][c]
+                    }
+                    if (maxConf >= confThreshold) {
+                        val cx = output[0][i][0]
+                        val cy = output[0][i][1]
+                        val w = output[0][i][2]
+                        val h = output[0][i][3]
+                        val scale = if (cx > 1.5f || w > 1.5f) inputSize.toFloat() else 1f
+                        val left = ((cx - w / 2f) / scale).coerceIn(0f, 1f)
+                        val top = ((cy - h / 2f) / scale).coerceIn(0f, 1f)
+                        val right = ((cx + w / 2f) / scale).coerceIn(0f, 1f)
+                        val bottom = ((cy + h / 2f) / scale).coerceIn(0f, 1f)
+                        if (right > left && bottom > top) {
+                            candidates.add(DetectedBox(RectF(left, top, right, bottom), maxConf))
+                        }
+                    }
                 }
             }
+            applyNms(candidates, iouThreshold)
+        } catch (e: Exception) {
+            statusMessage = "RUN ERR: ${e.message}"
+            emptyList()
         }
-        return applyNms(candidates, iouThreshold)
     }
 
     private fun bitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
-        val buffer = ByteBuffer.allocateDirect(4 * inputSize * inputSize * 3)
+        val buffer = ByteBuffer.allocateDirect(4 * 3 * inputSize * inputSize)
         buffer.order(ByteOrder.nativeOrder())
-        val pixels = IntArray(inputSize * inputSize)
+        val totalPixels = inputSize * inputSize
+        val pixels = IntArray(totalPixels)
         bitmap.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
-        for (pixel in pixels) {
-            buffer.putFloat(((pixel shr 16) and 0xFF) / 255f)
-            buffer.putFloat(((pixel shr 8) and 0xFF) / 255f)
-            buffer.putFloat((pixel and 0xFF) / 255f)
+
+        for (i in 0 until totalPixels) {
+            buffer.putFloat(((pixels[i] shr 16) and 0xFF) / 255f)
+        }
+        for (i in 0 until totalPixels) {
+            buffer.putFloat(((pixels[i] shr 8) and 0xFF) / 255f)
+        }
+        for (i in 0 until totalPixels) {
+            buffer.putFloat((pixels[i] and 0xFF) / 255f)
         }
         buffer.rewind()
         return buffer

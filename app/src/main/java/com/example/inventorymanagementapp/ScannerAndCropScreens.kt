@@ -1,5 +1,7 @@
 package com.example.inventorymanagementapp
 
+import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -78,7 +80,7 @@ fun LiveScannerScreen(
     items: List<InventoryItem>,
     yoloHelper: YoloDetectorHelper,
     shapeHelper: ShapeRecognitionHelper,
-    similarityThreshold: Double = 0.65,
+    similarityThreshold: Double = 0.50,
     onAddCountToItem: (itemId: String, addedCount: Int) -> Unit,
     onBack: () -> Unit
 ) {
@@ -107,8 +109,12 @@ fun LiveScannerScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedItemId by remember { mutableStateOf(items.firstOrNull()?.id) }
     val selectedItem = items.find { it.id == selectedItemId }
+    val currentSelectedItem by rememberUpdatedState(selectedItem)
 
+
+    var rawYoloBoxes by remember { mutableStateOf<List<DetectedBox>>(emptyList()) }
     var matchedBoxes by remember { mutableStateOf<List<DetectedBox>>(emptyList()) }
+    var bestSimSeen by remember { mutableDoubleStateOf(0.0) }
     var showConfirmCountDialog by remember { mutableStateOf(false) }
 
     if (!hasCameraPermission) {
@@ -162,29 +168,33 @@ fun LiveScannerScreen(
                                 raw
                             }
 
-                            val target = selectedItem
-                            if (target != null && target.references.isNotEmpty() && !showConfirmCountDialog) {
-                                val rawBoxes = yoloHelper.detect(rotated, confThreshold = 0.40f)
-                                val filtered = mutableListOf<DetectedBox>()
-                                for (box in rawBoxes) {
-                                    val l = (box.rect.left * rotated.width).toInt()
-                                        .coerceIn(0, rotated.width - 1)
-                                    val t = (box.rect.top * rotated.height).toInt()
-                                        .coerceIn(0, rotated.height - 1)
-                                    val w = (box.rect.width() * rotated.width).toInt()
-                                        .coerceIn(1, rotated.width - l)
-                                    val h = (box.rect.height() * rotated.height).toInt()
-                                        .coerceIn(1, rotated.height - t)
-                                    val crop = Bitmap.createBitmap(rotated, l, t, w, h)
-                                    val emb = shapeHelper.extractEmbedding(crop) ?: continue
-                                    val sim = shapeHelper.maxSimilarityToItem(emb, target)
-                                    if (sim >= similarityThreshold) {
-                                        filtered.add(box.copy(similarity = sim))
+                            if (!showConfirmCountDialog) {
+                                val rawBoxes = yoloHelper.detect(rotated, confThreshold = 0.20f)
+                                rawYoloBoxes = rawBoxes
+
+                                val target = currentSelectedItem
+                                if (target != null && target.references.isNotEmpty()) {
+                                    val filtered = mutableListOf<DetectedBox>()
+                                    var topSim = 0.0
+                                    for (box in rawBoxes) {
+                                        val l = (box.rect.left * rotated.width).toInt().coerceIn(0, rotated.width - 1)
+                                        val t = (box.rect.top * rotated.height).toInt().coerceIn(0, rotated.height - 1)
+                                        val w = (box.rect.width() * rotated.width).toInt().coerceIn(1, rotated.width - l)
+                                        val h = (box.rect.height() * rotated.height).toInt().coerceIn(1, rotated.height - t)
+                                        val crop = Bitmap.createBitmap(rotated, l, t, w, h)
+                                        val emb = shapeHelper.extractEmbedding(crop) ?: continue
+                                        val sim = shapeHelper.maxSimilarityToItem(emb, target)
+                                        if (sim > topSim) topSim = sim
+                                        if (sim >= similarityThreshold) {
+                                            filtered.add(box.copy(similarity = sim))
+                                        }
                                     }
+                                    bestSimSeen = topSim
+                                    matchedBoxes = filtered
+                                } else {
+                                    bestSimSeen = 0.0
+                                    matchedBoxes = emptyList()
                                 }
-                                matchedBoxes = filtered
-                            } else if (!showConfirmCountDialog) {
-                                matchedBoxes = emptyList()
                             }
                             imageProxy.close()
                         }
@@ -203,12 +213,20 @@ fun LiveScannerScreen(
             )
 
             Canvas(modifier = Modifier.fillMaxSize()) {
+                for (box in rawYoloBoxes) {
+                    drawRect(
+                        color = Color.Yellow,
+                        topLeft = Offset(box.rect.left * size.width, box.rect.top * size.height),
+                        size = Size(box.rect.width() * size.width, box.rect.height() * size.height),
+                        style = Stroke(width = 3f)
+                    )
+                }
                 for (box in matchedBoxes) {
                     drawRect(
                         color = Color.Green,
                         topLeft = Offset(box.rect.left * size.width, box.rect.top * size.height),
                         size = Size(box.rect.width() * size.width, box.rect.height() * size.height),
-                        style = Stroke(width = 6f)
+                        style = Stroke(width = 7f)
                     )
                 }
             }
@@ -228,17 +246,16 @@ fun LiveScannerScreen(
                     shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
                 ) {
+                    val simPct = (bestSimSeen * 100).toInt()
                     Text(
-                        text = when {
-                            selectedItem == null -> "Select an item below"
-                            selectedItem.references.isEmpty() -> "${selectedItem.name}: No ref photos!"
-                            else -> "${selectedItem.name}: ${matchedBoxes.size} matched"
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        text = "${yoloHelper.statusMessage} | Boxes:${rawYoloBoxes.size} | Sim:$simPct% | Match:${matchedBoxes.size}",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
+
 
             if (selectedItem != null && matchedBoxes.isNotEmpty()) {
                 Button(

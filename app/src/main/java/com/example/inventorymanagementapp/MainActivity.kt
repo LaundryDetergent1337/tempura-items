@@ -129,7 +129,7 @@ fun InventoryAppScreen() {
             items = items,
             yoloHelper = yoloHelper,
             shapeHelper = shapeHelper,
-            similarityThreshold = 0.65,
+            similarityThreshold = 0.50,
             onAddCountToItem = { itemId, added ->
                 changeQuantity(itemId, added)
                 Toast.makeText(context, "Added +$added to inventory!", Toast.LENGTH_SHORT).show()
