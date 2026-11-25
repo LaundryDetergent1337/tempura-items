@@ -80,7 +80,7 @@ fun LiveScannerScreen(
     items: List<InventoryItem>,
     yoloHelper: YoloDetectorHelper,
     shapeHelper: ShapeRecognitionHelper,
-    similarityThreshold: Double = 0.50,
+    similarityThreshold: Double = 0.38,
     onAddCountToItem: (itemId: String, addedCount: Int) -> Unit,
     onBack: () -> Unit
 ) {
