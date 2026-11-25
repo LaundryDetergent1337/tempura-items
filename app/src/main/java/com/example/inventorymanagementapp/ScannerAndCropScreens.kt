@@ -169,8 +169,9 @@ fun LiveScannerScreen(
                             }
 
                             if (!showConfirmCountDialog) {
-                                val rawBoxes = yoloHelper.detect(rotated, confThreshold = 0.20f)
-                                rawYoloBoxes = rawBoxes
+                                val rawBoxes = yoloHelper.detect(rotated, confThreshold = 0.25f)
+                                    .sortedByDescending { it.confidence }
+                                    .take(40)
 
                                 val target = currentSelectedItem
                                 if (target != null && target.references.isNotEmpty()) {
@@ -182,7 +183,10 @@ fun LiveScannerScreen(
                                         val w = (box.rect.width() * rotated.width).toInt().coerceIn(1, rotated.width - l)
                                         val h = (box.rect.height() * rotated.height).toInt().coerceIn(1, rotated.height - t)
                                         val crop = Bitmap.createBitmap(rotated, l, t, w, h)
-                                        val emb = shapeHelper.extractEmbedding(crop) ?: continue
+                                        val emb = shapeHelper.extractEmbedding(crop)
+                                        crop.recycle()
+                                        if (emb == null) continue
+
                                         val sim = shapeHelper.maxSimilarityToItem(emb, target)
                                         if (sim > topSim) topSim = sim
                                         if (sim >= similarityThreshold) {

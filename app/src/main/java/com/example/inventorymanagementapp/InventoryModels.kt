@@ -184,6 +184,14 @@ class ShapeRecognitionHelper(context: Context) {
 class YoloDetectorHelper(context: Context, modelName: String = "sku110k_yolo.tflite") {
     private var interpreter: Interpreter? = null
     private val inputSize = 640
+    private var reusableOutput: Array<Array<FloatArray>>? = null
+
+    // Add these 3 reusable fields inside YoloDetectorHelper right below inputSize = 640
+    private val totalPixels = inputSize * inputSize
+    private val reusableBuffer = ByteBuffer.allocateDirect(4 * 3 * totalPixels).apply {
+        order(ByteOrder.nativeOrder())
+    }
+    private val reusablePixels = IntArray(totalPixels)
     var statusMessage: String = "Loading..."
 
     init {
@@ -217,8 +225,12 @@ class YoloDetectorHelper(context: Context, modelName: String = "sku110k_yolo.tfl
             val dim2 = outShape.get(2)
             val candidates = mutableListOf<DetectedBox>()
 
+            val output = reusableOutput ?: Array(1) { Array(dim1) { FloatArray(dim2) } }.also {
+                reusableOutput = it
+            }
+
             if (dim1 < dim2) {
-                val output = Array(1) { Array(dim1) { FloatArray(dim2) } }
+
                 interp.run(inputBuffer, output)
                 for (i in 0 until dim2) {
                     var maxConf = 0f
@@ -241,7 +253,6 @@ class YoloDetectorHelper(context: Context, modelName: String = "sku110k_yolo.tfl
                     }
                 }
             } else {
-                val output = Array(1) { Array(dim1) { FloatArray(dim2) } }
                 interp.run(inputBuffer, output)
                 for (i in 0 until dim1) {
                     var maxConf = 0f
@@ -272,23 +283,20 @@ class YoloDetectorHelper(context: Context, modelName: String = "sku110k_yolo.tfl
     }
 
     private fun bitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
-        val buffer = ByteBuffer.allocateDirect(4 * 3 * inputSize * inputSize)
-        buffer.order(ByteOrder.nativeOrder())
-        val totalPixels = inputSize * inputSize
-        val pixels = IntArray(totalPixels)
-        bitmap.getPixels(pixels, 0, inputSize, 0, 0, inputSize, inputSize)
-
+        reusableBuffer.rewind()
+        bitmap.getPixels(reusablePixels, 0, inputSize, 0, 0, inputSize, inputSize)
+        val inv255 = 1f / 255f
         for (i in 0 until totalPixels) {
-            buffer.putFloat(((pixels[i] shr 16) and 0xFF) / 255f)
+            reusableBuffer.putFloat(((reusablePixels[i] shr 16) and 0xFF) * inv255)
         }
         for (i in 0 until totalPixels) {
-            buffer.putFloat(((pixels[i] shr 8) and 0xFF) / 255f)
+            reusableBuffer.putFloat(((reusablePixels[i] shr 8) and 0xFF) * inv255)
         }
         for (i in 0 until totalPixels) {
-            buffer.putFloat((pixels[i] and 0xFF) / 255f)
+            reusableBuffer.putFloat((reusablePixels[i] and 0xFF) * inv255)
         }
-        buffer.rewind()
-        return buffer
+        reusableBuffer.rewind()
+        return reusableBuffer
     }
 
     private fun applyNms(boxes: List<DetectedBox>, iouThreshold: Float): List<DetectedBox> {
